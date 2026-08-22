@@ -23,6 +23,7 @@ def technical_signals(code: str):
     """RSI/MACD/이동평균 크로스 등 객관적 기술적 신호를 계산해서 해석 문자열 리스트로 반환."""
     df = fdr.DataReader(code, (datetime.now() - timedelta(days=300)).strftime("%Y-%m-%d"))
 
+    df["MA5"] = df["Close"].rolling(5).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
     df["MA60"] = df["Close"].rolling(60).mean()
 
@@ -41,6 +42,18 @@ def technical_signals(code: str):
 
     latest, prev = df.iloc[-1], df.iloc[-2]
     signals = []
+
+    ma5, close = latest["MA5"], latest["Close"]
+    prev_ma5, prev_close = prev["MA5"], prev["Close"]
+    if pd.notna(ma5) and pd.notna(prev_ma5):
+        if prev_close <= prev_ma5 and close > ma5:
+            signals.append("5일선 상향돌파")
+        elif prev_close >= prev_ma5 and close < ma5:
+            signals.append("5일선 하향돌파")
+        elif close > ma5:
+            signals.append("5일선 위")
+        else:
+            signals.append("5일선 아래")
 
     ma20, ma60 = latest["MA20"], latest["MA60"]
     prev_ma20, prev_ma60 = prev["MA20"], prev["MA60"]
@@ -74,18 +87,17 @@ def technical_signals(code: str):
     return signals
 
 
-def foreign_institution_net_trading(code: str):
-    """가장 최근 거래일의 기관/외국인 순매매 수량(주)을 네이버 금융에서 조회."""
+def foreign_institution_net_trading(code: str, days: int = 3):
+    """최근 N거래일(전일 포함)의 기관/외국인 순매매 수량(주)을 네이버 금융에서 조회."""
     url = f"https://finance.naver.com/item/frgn.naver?code={code}"
     resp = requests.get(url, headers=NAVER_HEADERS, timeout=10)
     resp.encoding = "euc-kr"
     tables = pd.read_html(StringIO(resp.text))
     df = tables[3].dropna(how="all")
-    latest = df.iloc[0]
-    date = latest.iloc[0]
-    institution_net = latest.iloc[5]
-    foreign_net = latest.iloc[6]
-    return date, float(institution_net), float(foreign_net)
+    rows = []
+    for _, row in df.head(days).iterrows():
+        rows.append((row.iloc[0], float(row.iloc[5]), float(row.iloc[6])))
+    return rows
 
 
 def build_message() -> str:
@@ -122,11 +134,13 @@ def build_message() -> str:
             lines.append(f"{name}: 조회 실패")
 
     lines.append("")
-    lines.append("[외국인/기관 순매매] (전일, 주)")
+    lines.append("[외국인/기관 순매매] (최근 3거래일, 주)")
     for name, code in WATCHLIST:
         try:
-            date, inst, forgn = foreign_institution_net_trading(code)
-            lines.append(f"{name} ({date}): 기관 {inst:+,.0f} / 외국인 {forgn:+,.0f}")
+            rows = foreign_institution_net_trading(code)
+            lines.append(f"{name}:")
+            for date, inst, forgn in rows:
+                lines.append(f"  {date} 기관 {inst:+,.0f} / 외국인 {forgn:+,.0f}")
         except Exception:
             lines.append(f"{name}: 조회 실패")
 
