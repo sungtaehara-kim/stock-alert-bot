@@ -1,17 +1,31 @@
+import argparse
 import json
 import os
 from datetime import datetime, timedelta
 from io import StringIO
+from pathlib import Path
 
 import FinanceDataReader as fdr
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import mplfinance as mpf
 import pandas as pd
 import requests
 
 INDICES = [("KOSPI", "KS11"), ("KOSDAQ", "KQ11"), ("나스닥", "IXIC"), ("S&P500", "US500")]
 WATCHLIST = [("삼성전자", "005930"), ("SK하이닉스", "000660")]
+WATCHLIST_EN = [("Samsung Electronics", "005930"), ("SK Hynix", "000660")]
 REFERENCE = [("원/달러 환율", "USD/KRW", "원"), ("WTI 유가", "CL=F", "$")]
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+REPO = "sungtaehara-kim/stock-alert-bot"
+BRANCH = "main"
+CHARTS_DIR = Path("charts")
+MESSAGE_FILE = Path("report_message.txt")
+CHART_PATH_FILE = Path("report_chart_path.txt")
 
 
 def last_two_closes(code: str):
@@ -157,6 +171,43 @@ def build_message() -> str:
     return "\n".join(lines)
 
 
+def build_chart() -> Path:
+    """관심종목 캔들차트(+MA5/20/60)를 하나의 이미지로 만들어 저장. (영문 라벨만 사용 - 폰트 설치 불필요)"""
+    CHARTS_DIR.mkdir(exist_ok=True)
+    today_str = datetime.now().strftime("%Y%m%d")
+    out_path = CHARTS_DIR / f"{today_str}.png"
+
+    fig, axes = plt.subplots(len(WATCHLIST_EN), 1, figsize=(9, 4.5 * len(WATCHLIST_EN)))
+    if len(WATCHLIST_EN) == 1:
+        axes = [axes]
+
+    for ax, (name_en, code) in zip(axes, WATCHLIST_EN):
+        df = fdr.DataReader(code, (datetime.now() - timedelta(days=150)).strftime("%Y-%m-%d"))
+        df["MA5"] = df["Close"].rolling(5).mean()
+        df["MA20"] = df["Close"].rolling(20).mean()
+        df["MA60"] = df["Close"].rolling(60).mean()
+        plot_df = df.tail(90)
+
+        mpf.plot(
+            plot_df,
+            type="candle",
+            style="yahoo",
+            ax=ax,
+            volume=False,
+            addplot=[
+                mpf.make_addplot(plot_df["MA5"], ax=ax, width=0.8),
+                mpf.make_addplot(plot_df["MA20"], ax=ax, width=0.8),
+                mpf.make_addplot(plot_df["MA60"], ax=ax, width=0.8),
+            ],
+        )
+        ax.set_title(f"{name_en} ({code})")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=130)
+    plt.close(fig)
+    return out_path
+
+
 def refresh_access_token() -> str:
     resp = requests.post(
         "https://kauth.kakao.com/oauth/token",
@@ -190,13 +241,62 @@ def send_kakao_memo(access_token: str, text: str) -> None:
         raise RuntimeError(f"카카오 전송 실패: {result}")
 
 
-def main():
+def send_kakao_feed(access_token: str, image_url: str) -> None:
+    payload = {
+        "object_type": "feed",
+        "content": {
+            "title": "오늘의 관심종목 차트",
+            "description": datetime.now().strftime("%Y-%m-%d") + " 캔들차트 (5/20/60일선)",
+            "image_url": image_url,
+            "image_width": 1000,
+            "image_height": 1000,
+            "link": {"web_url": "https://finance.naver.com", "mobile_web_url": "https://finance.naver.com"},
+        },
+    }
+    resp = requests.post(
+        "https://kapi.kakao.com/v2/api/talk/memo/default/send",
+        headers={"Authorization": f"Bearer {access_token}"},
+        data={"template_object": json.dumps(payload, ensure_ascii=False)},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("result_code") != 0:
+        raise RuntimeError(f"카카오 이미지 전송 실패: {result}")
+
+
+def prepare():
     text = build_message()
     print(text)
+    MESSAGE_FILE.write_text(text, encoding="utf-8")
+
+    chart_path = build_chart()
+    CHART_PATH_FILE.write_text(str(chart_path.as_posix()), encoding="utf-8")
+    print(f"차트 저장: {chart_path}")
+
+
+def send():
+    text = MESSAGE_FILE.read_text(encoding="utf-8")
     token = refresh_access_token()
     send_kakao_memo(token, text)
-    print("전송 완료")
+    print("텍스트 전송 완료")
+
+    if CHART_PATH_FILE.exists():
+        chart_rel_path = CHART_PATH_FILE.read_text(encoding="utf-8").strip()
+        image_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/{chart_rel_path}"
+        send_kakao_feed(token, image_url)
+        print("차트 이미지 전송 완료")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=["prepare", "send", "all"], nargs="?", default="all")
+    args = parser.parse_args()
+
+    if args.mode == "prepare":
+        prepare()
+    elif args.mode == "send":
+        send()
+    else:
+        prepare()
+        send()

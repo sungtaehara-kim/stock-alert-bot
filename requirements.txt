@@ -2,3 +2,5 @@ finance-datareader>=0.9.50
 pandas>=2.0
 requests>=2.31
 lxml>=5.0
+matplotlib>=3.7
+mplfinance==0.12.10b0
