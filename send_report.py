@@ -14,7 +14,6 @@ import mplfinance as mpf
 import pandas as pd
 import requests
 
-INDICES = [("KOSPI", "KS11"), ("KOSDAQ", "KQ11"), ("나스닥", "IXIC"), ("S&P500", "US500")]
 WATCHLIST = [("삼성전자", "005930"), ("SK하이닉스", "000660")]
 WATCHLIST_EN = [("Samsung Electronics", "005930"), ("SK Hynix", "000660")]
 REFERENCE = [("원/달러 환율", "USD/KRW", "원"), ("WTI 유가", "CL=F", "$")]
@@ -39,7 +38,6 @@ def technical_signals(code: str):
 
     df["MA5"] = df["Close"].rolling(5).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
-    df["MA60"] = df["Close"].rolling(60).mean()
 
     delta = df["Close"].diff()
     gain = delta.clip(lower=0)
@@ -69,17 +67,17 @@ def technical_signals(code: str):
         else:
             signals.append("5일선 아래")
 
-    ma20, ma60 = latest["MA20"], latest["MA60"]
-    prev_ma20, prev_ma60 = prev["MA20"], prev["MA60"]
-    if pd.notna(ma20) and pd.notna(ma60) and pd.notna(prev_ma20) and pd.notna(prev_ma60):
-        if prev_ma20 <= prev_ma60 and ma20 > ma60:
-            signals.append("골든크로스 발생")
-        elif prev_ma20 >= prev_ma60 and ma20 < ma60:
-            signals.append("데드크로스 발생")
-        elif ma20 > ma60:
-            signals.append("20일선>60일선 (상승추세)")
+    ma20 = latest["MA20"]
+    prev_ma20 = prev["MA20"]
+    if pd.notna(ma20) and pd.notna(prev_ma20):
+        if prev_close <= prev_ma20 and close > ma20:
+            signals.append("20일선 상향돌파")
+        elif prev_close >= prev_ma20 and close < ma20:
+            signals.append("20일선 하향돌파")
+        elif close > ma20:
+            signals.append("20일선 위")
         else:
-            signals.append("20일선<60일선 (하락추세)")
+            signals.append("20일선 아래")
 
     rsi = latest["RSI"]
     if pd.notna(rsi):
@@ -118,16 +116,6 @@ def build_message() -> str:
     lines = []
     today = datetime.now().strftime("%Y-%m-%d (%a)")
     lines.append(f"\U0001F4C8 {today} 아침 시황")
-    lines.append("")
-    lines.append("[시장 지수]")
-    for name, code in INDICES:
-        try:
-            cur, prev = last_two_closes(code)
-            chg = (cur - prev) / prev * 100
-            lines.append(f"{name}: {cur:,.2f} ({chg:+.2f}%)")
-        except Exception:
-            lines.append(f"{name}: 조회 실패")
-
     lines.append("")
     lines.append("[관심종목]")
     for name, code in WATCHLIST:
@@ -185,7 +173,6 @@ def build_chart() -> Path:
         df = fdr.DataReader(code, (datetime.now() - timedelta(days=150)).strftime("%Y-%m-%d"))
         df["MA5"] = df["Close"].rolling(5).mean()
         df["MA20"] = df["Close"].rolling(20).mean()
-        df["MA60"] = df["Close"].rolling(60).mean()
         plot_df = df.tail(90)
 
         mpf.plot(
@@ -197,7 +184,6 @@ def build_chart() -> Path:
             addplot=[
                 mpf.make_addplot(plot_df["MA5"], ax=ax, width=0.8),
                 mpf.make_addplot(plot_df["MA20"], ax=ax, width=0.8),
-                mpf.make_addplot(plot_df["MA60"], ax=ax, width=0.8),
             ],
         )
         ax.set_title(f"{name_en} ({code})")
@@ -246,7 +232,7 @@ def send_kakao_feed(access_token: str, image_url: str) -> None:
         "object_type": "feed",
         "content": {
             "title": "오늘의 관심종목 차트",
-            "description": datetime.now().strftime("%Y-%m-%d") + " 캔들차트 (5/20/60일선)",
+            "description": datetime.now().strftime("%Y-%m-%d") + " 캔들차트 (5/20일선)",
             "image_url": image_url,
             "image_width": 1000,
             "image_height": 1000,
