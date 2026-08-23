@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 
 WATCHLIST = [("삼성전자", "005930"), ("SK하이닉스", "000660")]
 WATCHLIST_EN = [("Samsung Electronics", "005930"), ("SK Hynix", "000660")]
@@ -112,6 +113,32 @@ def foreign_institution_net_trading(code: str, days: int = 3):
     return rows
 
 
+def foreign_top_net_buy(n: int = 5):
+    """당일 거래소 전체에서 외국인 순매수 상위 종목을 네이버 금융에서 조회 (로그인 불필요, 특정 종목 추천이 아닌 실제 수급 랭킹)."""
+    url = "https://finance.naver.com/sise/"
+    resp = requests.get(url, headers=NAVER_HEADERS, timeout=10)
+    resp.encoding = "euc-kr"
+    soup = BeautifulSoup(resp.text, "html.parser")
+    table = soup.find("table", id="frgn_deal_tab_1")
+
+    rows = []
+    for tr in table.find_all("tr"):
+        a = tr.find("a")
+        if not a:
+            continue
+        name = a.text.strip()
+        code = a["href"].split("code=")[1]
+        tds = tr.find_all("td")
+        price = tds[2].get_text(strip=True)
+        change_td = tds[3]
+        direction = "+" if "rate_up" in change_td.get("class", []) else "-"
+        change = change_td.get_text(strip=True).lstrip("상승하락")
+        rows.append((name, code, price, direction, change))
+        if len(rows) >= n:
+            break
+    return rows
+
+
 def build_message() -> str:
     lines = []
     today = datetime.now().strftime("%Y-%m-%d (%a)")
@@ -145,6 +172,15 @@ def build_message() -> str:
                 lines.append(f"  {date} 기관 {inst:+,.0f} / 외국인 {forgn:+,.0f}")
         except Exception:
             lines.append(f"{name}: 조회 실패")
+
+    lines.append("")
+    lines.append("[외국인 순매수 상위 5종목] (당일 기준, 특정 추천 아닌 수급 랭킹)")
+    try:
+        for i, (name, code, price, direction, change) in enumerate(foreign_top_net_buy(), start=1):
+            sign = "▲" if direction == "+" else "▼"
+            lines.append(f"{i}. {name} ({code}): {price}원 ({sign}{change})")
+    except Exception:
+        lines.append("조회 실패")
 
     lines.append("")
     lines.append("[참고 지표] (매매 판단은 직접 해주세요)")
