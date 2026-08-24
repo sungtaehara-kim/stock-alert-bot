@@ -100,6 +100,26 @@ def technical_signals(code: str):
     return signals
 
 
+def support_resistance(code: str):
+    """최근 20일 고가/저가와 볼린저밴드 상/하단 등 '관찰된' 가격대를 반환 (매매 지시가 아닌 참고용 데이터)."""
+    df = fdr.DataReader(code, (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d"))
+    recent20 = df.tail(20)
+    recent_high = float(recent20["High"].max())
+    recent_low = float(recent20["Low"].min())
+
+    mid = df["Close"].rolling(20).mean()
+    std = df["Close"].rolling(20).std()
+    bb_upper = float((mid + 2 * std).iloc[-1])
+    bb_lower = float((mid - 2 * std).iloc[-1])
+
+    return {
+        "recent_high": recent_high,
+        "recent_low": recent_low,
+        "bb_upper": bb_upper,
+        "bb_lower": bb_lower,
+    }
+
+
 def foreign_institution_net_trading(code: str, days: int = 3):
     """최근 N거래일(전일 포함)의 기관/외국인 순매매 수량(주)을 네이버 금융에서 조회."""
     url = f"https://finance.naver.com/item/frgn.naver?code={code}"
@@ -159,6 +179,18 @@ def build_message() -> str:
         try:
             signals = technical_signals(code)
             lines.append(f"{name}: {', '.join(signals) if signals else '특이 신호 없음'}")
+        except Exception:
+            lines.append(f"{name}: 조회 실패")
+
+    lines.append("")
+    lines.append("[참고 가격대] (관찰된 지지/저항, 매매 지시 아님)")
+    for name, code in WATCHLIST:
+        try:
+            sr = support_resistance(code)
+            lines.append(
+                f"{name}: 20일 고점 {sr['recent_high']:,.0f} / 저점 {sr['recent_low']:,.0f} "
+                f"/ 볼린저 상단 {sr['bb_upper']:,.0f} / 하단 {sr['bb_lower']:,.0f}"
+            )
         except Exception:
             lines.append(f"{name}: 조회 실패")
 
